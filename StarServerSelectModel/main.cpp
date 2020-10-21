@@ -5,6 +5,13 @@
 #include <WS2tcpip.h>
 #include "SocketLog.h"
 #include <locale>
+#include <process.h>
+#include "Console.h"
+
+#define MAX_WIDTH 80
+#define MAX_HEIGHT 23
+#define PACKET_SIZE 16
+#define RECV_LEN PACKET_SIZE*90
 
 #define SERVER_PORT 3000
 SOCKET g_ListenSocket;
@@ -28,6 +35,7 @@ struct Session
 
 std::list<Session*> g_ListSession;
 int32_t g_ClientID = 100;
+int g_FPS = 0;
 
 void Accept();
 void Network();
@@ -37,14 +45,83 @@ void Disconnect(Session* inSession);
 void BroadcastSend(char* buffer, int len, Session* exceptSession);
 void InitializeListen();
 void UnicastSend(char* buffer, int len, Session* toSession);
+void ClearSession();
+
+LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+HINSTANCE g_hInst;
+HWND g_hWnd;
+
+WNDCLASS WndClass;
+
+WCHAR g_TextoutBuffer1[256];
+WCHAR g_TextoutBuffer2[256];
+
+
+
+unsigned int WINAPI TestWindow(LPVOID lpParam);
 int main()
 {
 	InitializeListen();
+	//long long fpsTime = GetTickCount64();
+	HANDLE windowThread;
+	windowThread = (HANDLE)_beginthreadex(NULL, 0, TestWindow, NULL, 0, NULL);
+
 	while (true)
 	{
+
 		Network();
 		Render();
 	}
+}
+unsigned int WINAPI TestWindow(LPVOID lpParam)
+{
+	HINSTANCE hInstance;
+	HWND hWnd;
+	MSG Message;
+
+	hInstance = GetModuleHandle(NULL);
+	g_hInst = hInstance;
+
+	//윈도우 클래스 초기화
+	WndClass.cbClsExtra = 0;
+	WndClass.cbWndExtra = 0;
+	WndClass.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
+	WndClass.hCursor = LoadCursor(NULL, IDC_ARROW);
+	WndClass.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+	WndClass.hInstance = hInstance;
+	WndClass.lpfnWndProc = (WNDPROC)WndProc;
+	WndClass.lpszClassName = L"ApiBase";
+	WndClass.lpszMenuName = NULL;
+	WndClass.style = CS_HREDRAW | CS_VREDRAW;
+
+	////윈도우 클래스 생성.
+	RegisterClass(&WndClass);
+
+	//윈도우 객체 생성.
+	hWnd = CreateWindow(L"ApiBase",
+		L"Test",
+		WS_OVERLAPPEDWINDOW,
+		10,// X
+		100,// Y
+		400,// Width
+		400,// Height
+		NULL,
+		(HMENU)NULL,
+		hInstance,
+		NULL);
+
+	//윈도우 창 띄우기.
+	ShowWindow(hWnd, 1);
+
+	g_hWnd = hWnd;
+
+
+	while (GetMessage(&Message, 0, 0, 0))
+	{
+		TranslateMessage(&Message);
+		DispatchMessage(&Message);
+	}
+	return 0;
 }
 
 void Accept()
@@ -96,13 +173,12 @@ void Accept()
 	BroadcastSend((char*)&packet,sizeof(packet),newSession);
 
 }
-
 void Network()
 {
 	fd_set readSet;
 	FD_ZERO(&readSet);
 	FD_SET(g_ListenSocket, &readSet);
-	char buffer[64]; // 16*4
+	char buffer[RECV_LEN]; 
 
 	//------------------------------------
 	// readSet 세팅
@@ -135,13 +211,19 @@ void Network()
 		{
 			int recvRtn = recv(session->socket, buffer, sizeof(buffer), 0);
 
+			//For Debug
+			wsprintf(g_TextoutBuffer1,L"Recv Return:%d", recvRtn);
+			InvalidateRect(g_hWnd, NULL, TRUE);
+
 			if (recvRtn <= 0)
 			{
 				ERROR_LOG(L"recv() Error");
 				Disconnect(session);
 			}
-			PacketProcess(buffer,recvRtn, session);
-			
+			else
+			{
+				PacketProcess(buffer, recvRtn, session);
+			}
 		}
 	}
 	
@@ -149,17 +231,32 @@ void Network()
 
 void Render()
 {
+	ClearSession();
+	CConsole::GetInstance()->Buffer_Clear();
 
+	for (auto session : g_ListSession)
+	{
+		if (session->x < 0 || session->y < 0)
+		{
+			continue;
+		}
+		if (session->x > MAX_WIDTH || session->y >MAX_HEIGHT)
+		{
+			continue;
+		}
+		CConsole::GetInstance()->Sprite_Draw(session->x, session->y, '*');
+	}
+	CConsole::GetInstance()->Buffer_Flip();
 }
 
 void PacketProcess(char* buffer, int recvLen,Session* session)
 {
-	if (recvLen < 16)
+	if (recvLen < PACKET_SIZE)
 	{
 		ERROR_LOG(L"Recv  Divdide Error");
 	}
 	char* tempBuffer;
-	for (int i = 0; i <= recvLen-16; i++)
+	for (int i = 0; i <= recvLen- PACKET_SIZE; i+= PACKET_SIZE)
 	{
 		tempBuffer = buffer + i;
 		int* packet = (int*)tempBuffer;
@@ -168,8 +265,9 @@ void PacketProcess(char* buffer, int recvLen,Session* session)
 		{
 		case MOVE_STAR:
 		{
-			// 보내온, x,y가 범위에 맞는지 체크해야함
-
+			// 보내온 세션의 좌표를 갱신해주어야함.
+			session->x = *(packet + 2);
+			session->y = *(packet + 3);
 
 			// Move Star를 보내온 클라 외에 전부 BroadCast Send
 			int arr[4];
@@ -190,6 +288,50 @@ void PacketProcess(char* buffer, int recvLen,Session* session)
 
 void Disconnect(Session* inSession)
 {
+	//-------------------------------------------
+	// 링거 옵션으로 종료. 
+	//-------------------------------------------
+	LINGER optVal;
+	optVal.l_onoff = 1;
+	optVal.l_linger = 0;
+
+	int optionRtn = setsockopt(inSession->socket, SOL_SOCKET, SO_LINGER, (char*)&optVal, sizeof(optVal));
+	if (optionRtn == SOCKET_ERROR)
+	{
+		ERROR_LOG(L"lingerOption Error()");
+	}
+
+	closesocket(inSession->socket);
+
+	//-------------------------------------------
+	// 다른 접속되있는 클라에게, 이 클라가 삭제됬다고 알려야함.
+	//-------------------------------------------
+
+	int packet[4];
+	packet[0] = DEL_STAR;
+	packet[1] = inSession->id;
+
+	BroadcastSend((char*)&packet, sizeof(packet), inSession);
+
+	//-------------------------------------------
+	// session 정리 (동적해제 delete)
+	//-------------------------------------------
+	
+	auto iter = g_ListSession.begin();
+
+	for (; iter != g_ListSession.end();++iter)
+	{
+		if ((*iter) == inSession)
+		{
+			delete* iter;
+			//----------------------------------------
+			// 여기서 만약에 erase 하면 다른 리스트에서 순회하다 접근위반이 생겨버린다.
+			//----------------------------------------
+			*iter = nullptr;
+			break;
+		}
+
+	}
 }
 
 void BroadcastSend(char* buffer,int len, Session* exceptSession)
@@ -214,7 +356,7 @@ void BroadcastSend(char* buffer,int len, Session* exceptSession)
 			{
 				continue;
 			}
-			int sendRtn = send(session->socket, buffer, sizeof(buffer), 0);
+			int sendRtn = send(session->socket, buffer, len, 0);
 			if (sendRtn < 0)
 			{
 				ERROR_LOG(L"send() error");
@@ -276,5 +418,48 @@ void UnicastSend(char* buffer,int len, Session* toSession)
 		ERROR_LOG(L"send Error()");
 		Disconnect(toSession);
 	}
+}
+
+void ClearSession()
+{
+
+	auto iter = g_ListSession.begin();
+
+	for (; iter != g_ListSession.end(); )
+	{
+		if (*iter == nullptr)
+		{
+			iter = g_ListSession.erase(iter);
+		}
+		else
+		{
+			++iter;
+		}
+	}
+}
+
+
+
+LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
+{
+	HDC hdc;
+	PAINTSTRUCT ps;
+	long dwStyle;
+
+	switch (iMessage)
+	{
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		break;
+	case WM_PAINT:
+		PAINTSTRUCT ps;
+		HDC hdc = BeginPaint(hWnd, &ps);
+		hdc = GetDC(hWnd);
+		TextOut(hdc, 100, 50, g_TextoutBuffer1, wcslen(g_TextoutBuffer1));
+		ReleaseDC(hWnd, hdc);
+		EndPaint(hWnd, &ps);
+		break;
+	}
+	return DefWindowProc(hWnd, iMessage, wParam, lParam);
 }
 

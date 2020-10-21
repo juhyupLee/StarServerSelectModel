@@ -14,6 +14,7 @@ void CConsole::cs_Initial(void)
 	//-----------------------------------------------------------
 	m_Console = GetStdHandle(STD_OUTPUT_HANDLE);
 	SetConsoleCursorInfo(m_Console, &stConsoleCursor);
+	cs_ClearScreen();
 
 }
 
