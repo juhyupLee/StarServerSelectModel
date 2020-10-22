@@ -29,6 +29,7 @@ struct Session
 	short port;
 	int32_t x;
 	int32_t y;
+	bool bDeleted;
 };
 
 std::list<Session*> g_ListSession;
@@ -57,7 +58,6 @@ unsigned int WINAPI TestWindow(LPVOID lpParam);
 int main()
 {
 	InitializeListen();
-	//long long fpsTime = GetTickCount64();
 	HANDLE windowThread;
 	windowThread = (HANDLE)_beginthreadex(NULL, 0, TestWindow, NULL, 0, NULL);
 
@@ -136,6 +136,7 @@ void Accept()
 	// 초기 위치
 	newSession->x = 50;
 	newSession->y = 10;
+	newSession->bDeleted = false;
 	g_ListSession.push_back(newSession);
 
 	//ERROR_LOG()
@@ -293,6 +294,10 @@ void PacketProcess(char* buffer, int recvLen,Session* session)
 
 void Disconnect(Session* inSession)
 {
+	if (inSession->bDeleted == true)
+	{
+		return;
+	}
 	//-------------------------------------------
 	// 링거 옵션으로 종료. 
 	//-------------------------------------------
@@ -326,7 +331,8 @@ void Disconnect(Session* inSession)
 	{
 		if ((*iter) == inSession)
 		{
-			delete* iter;
+			delete *iter;
+			(*iter)->bDeleted = true;
 			//----------------------------------------
 			// 여기서 만약에 erase 하면 다른 리스트에서 순회하다 접근위반이 생겨버린다.
 			//----------------------------------------
