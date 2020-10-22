@@ -1,13 +1,12 @@
 #pragma comment(lib,"ws2_32.lib")
-#include <WinSock2.h>
-#include <iostream>
+//#include <WinSock2.h>
 #include <list>
 #include <WS2tcpip.h>
 #include "SocketLog.h"
 #include <locale>
 #include <process.h>
 #include "Console.h"
-
+#include <iostream>
 #define MAX_WIDTH 80
 #define MAX_HEIGHT 23
 #define PACKET_SIZE 16
@@ -22,7 +21,6 @@ enum
 	DEL_STAR,
 	MOVE_STAR
 };
-
 struct Session
 {
 	SOCKET socket;
@@ -34,7 +32,7 @@ struct Session
 };
 
 std::list<Session*> g_ListSession;
-int32_t g_ClientID = 100;
+int32_t g_ClientID = 1;
 int g_FPS = 0;
 
 void Accept();
@@ -46,16 +44,13 @@ void BroadcastSend(char* buffer, int len, Session* exceptSession);
 void InitializeListen();
 void UnicastSend(char* buffer, int len, Session* toSession);
 void ClearSession();
+void MoveStar(int* packet, Session* session);
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 HINSTANCE g_hInst;
 HWND g_hWnd;
 
 WNDCLASS WndClass;
-
-WCHAR g_TextoutBuffer1[256];
-WCHAR g_TextoutBuffer2[256];
-
 
 
 unsigned int WINAPI TestWindow(LPVOID lpParam);
@@ -68,11 +63,11 @@ int main()
 
 	while (true)
 	{
-
 		Network();
 		Render();
 	}
 }
+
 unsigned int WINAPI TestWindow(LPVOID lpParam)
 {
 	HINSTANCE hInstance;
@@ -143,8 +138,9 @@ void Accept()
 	newSession->y = 10;
 	g_ListSession.push_back(newSession);
 
-	wprintf(L"connect[IP:%s] [PORT:%d]\n", newSession->ip, newSession->port);
-
+	//ERROR_LOG()
+	//wprintf(L"connect[IP:%s] [PORT:%d]\n", newSession->ip, newSession->port);
+	
 	//-----------------------------------------------
 	// 클라가 들어오면 일단 그 클라에게 ID를 할당하고, 자기 별생성을 포함하여, 접속한 유저들의 별생성을 지시
 	//-----------------------------------------------
@@ -155,12 +151,16 @@ void Accept()
 
 	for (auto session : g_ListSession)
 	{
+		if (session == nullptr)
+		{
+			continue;
+		}
 		int packet[4];
 		packet[0] =  GEN_STAR;
 		packet[1] = session->id;
 		packet[2] = session->x;
 		packet[3] = session->y;
-		// 여기서 브로드캐스팅을 쓰면 안되는게, 지금 새로 생성된 클라에게만 쏘는것이라서 반복문을 돌면서쏴야된다
+		// 여기서 브로드캐스팅을 쓰면 안되는게, 지금 새로 생성된 클라에게 기존접속유저의 정보를 쏘는것이라서 반복문을 돌면서쏴야된다
 		UnicastSend((char*)&packet, sizeof(packet), newSession);
 	}
 	//-----------------------------------------------
@@ -180,11 +180,14 @@ void Network()
 	FD_SET(g_ListenSocket, &readSet);
 	char buffer[RECV_LEN]; 
 
+	
 	//------------------------------------
 	// readSet 세팅
 	//------------------------------------
 	for (auto session : g_ListSession)
 	{
+		if (session == nullptr)
+			continue;
 		FD_SET(session->socket, &readSet);
 	}
 
@@ -194,7 +197,7 @@ void Network()
 	int selectRtn = select(0, &readSet, NULL, NULL, NULL);
 	if (selectRtn < 0)
 	{
-		ERROR_LOG(L"select() error");
+		ERROR_LOG(L"select() error",g_hWnd);
 		return;
 	}
 
@@ -207,17 +210,20 @@ void Network()
 	//------------------------------------
 	for (auto session : g_ListSession)
 	{
+		if (session == nullptr)
+			continue;
+
 		if (FD_ISSET(session->socket, &readSet))
 		{
-			int recvRtn = recv(session->socket, buffer, sizeof(buffer), 0);
+			int recvRtn = recv(session->socket, buffer,sizeof(buffer), 0);
 
 			//For Debug
 			wsprintf(g_TextoutBuffer1,L"Recv Return:%d", recvRtn);
-			InvalidateRect(g_hWnd, NULL, TRUE);
+
 
 			if (recvRtn <= 0)
 			{
-				ERROR_LOG(L"recv() Error");
+				ERROR_LOG(L"recv() Error", g_hWnd);
 				Disconnect(session);
 			}
 			else
@@ -226,12 +232,23 @@ void Network()
 			}
 		}
 	}
-	
+
+
 }
 
 void Render()
 {
+	//--------------------------------------
+	// 렌더를 하기전에, Disconnect된 세션들을 리스트에서지움
+	//--------------------------------------
 	ClearSession();
+
+	//--------------------------------------
+	// 디버그용 세션 출력
+	//--------------------------------------
+	WindowDebug2(L"총 Sesiion", g_ListSession.size());
+	InvalidateRect(g_hWnd, NULL, TRUE);
+
 	CConsole::GetInstance()->Buffer_Clear();
 
 	for (auto session : g_ListSession)
@@ -253,31 +270,19 @@ void PacketProcess(char* buffer, int recvLen,Session* session)
 {
 	if (recvLen < PACKET_SIZE)
 	{
-		ERROR_LOG(L"Recv  Divdide Error");
+		ERROR_LOG(L"Recv  Divdide Error", g_hWnd);
 	}
 	char* tempBuffer;
 	for (int i = 0; i <= recvLen- PACKET_SIZE; i+= PACKET_SIZE)
 	{
 		tempBuffer = buffer + i;
 		int* packet = (int*)tempBuffer;
-
 		switch (*packet)
 		{
 		case MOVE_STAR:
-		{
-			// 보내온 세션의 좌표를 갱신해주어야함.
-			session->x = *(packet + 2);
-			session->y = *(packet + 3);
-
-			// Move Star를 보내온 클라 외에 전부 BroadCast Send
-			int arr[4];
-			arr[0] = MOVE_STAR;
-			arr[1] = *(packet + 1);
-			arr[2] = *(packet + 2);
-			arr[3] = *(packet + 3);
-			BroadcastSend((char*)arr,sizeof(arr), session);
+			MoveStar(packet, session);
 			break;
-		}
+
 		default:
 			// 정해진 프로토콜 이외의것을 보내면, 잘못된클라이기때문에 Disconnect
 			Disconnect(session);
@@ -298,7 +303,7 @@ void Disconnect(Session* inSession)
 	int optionRtn = setsockopt(inSession->socket, SOL_SOCKET, SO_LINGER, (char*)&optVal, sizeof(optVal));
 	if (optionRtn == SOCKET_ERROR)
 	{
-		ERROR_LOG(L"lingerOption Error()");
+		ERROR_LOG(L"lingerOption Error()", g_hWnd);
 	}
 
 	closesocket(inSession->socket);
@@ -310,8 +315,6 @@ void Disconnect(Session* inSession)
 	int packet[4];
 	packet[0] = DEL_STAR;
 	packet[1] = inSession->id;
-
-	BroadcastSend((char*)&packet, sizeof(packet), inSession);
 
 	//-------------------------------------------
 	// session 정리 (동적해제 delete)
@@ -330,20 +333,25 @@ void Disconnect(Session* inSession)
 			*iter = nullptr;
 			break;
 		}
-
 	}
-}
 
+	BroadcastSend((char*)&packet, sizeof(packet), inSession);
+
+}
 void BroadcastSend(char* buffer,int len, Session* exceptSession)
 {
 	if (!exceptSession)
 	{
 		for (auto session : g_ListSession)
 		{
+			if (session == nullptr)
+			{
+				continue;
+			}
 			int sendRtn = send(session->socket, buffer, len, 0);
 			if (sendRtn < 0)
 			{
-				ERROR_LOG(L"send() error");
+				ERROR_LOG(L"send() error", g_hWnd);
 				Disconnect(session);
 			}
 		}
@@ -352,16 +360,29 @@ void BroadcastSend(char* buffer,int len, Session* exceptSession)
 	{
 		for (auto session : g_ListSession)
 		{
-			if (session == exceptSession)
+			if (session == exceptSession || session==nullptr)
 			{
 				continue;
 			}
 			int sendRtn = send(session->socket, buffer, len, 0);
 			if (sendRtn < 0)
 			{
-				ERROR_LOG(L"send() error");
-				Disconnect(session);
+				//ERROR_LOG(L"send() error");
+				//----------------------------------------------------
+				// 만일 에러코드가 WSANOTSOCK이면, 재귀가 될 수있기때문에 후처리를 한다
+				//----------------------------------------------------
+				if (WSAGetLastError() == WSAENOTSOCK)
+				{
+					continue;
+				}
+				else
+				{
+					ERROR_LOG(L"send() error", g_hWnd);
+					Disconnect(session);
+				}
+				
 			}
+
 		}
 	}
 }
@@ -374,15 +395,17 @@ void InitializeListen()
 
 	if (0 != WSAStartup(MAKEWORD(2, 2), &wsaData))
 	{
-		ERROR_LOG(L"WSAStartup Error");
+		ERROR_LOG(L"WSAStartup Error", g_hWnd);
 		return ;
 	}
 
 	g_ListenSocket = socket(AF_INET, SOCK_STREAM, 0);
 
+	u_long on = 1;
+	ioctlsocket(g_ListenSocket, FIONBIO, &on);
 	if (g_ListenSocket == INVALID_SOCKET)
 	{
-		ERROR_LOG(L"socket() Error");
+		ERROR_LOG(L"socket() Error", g_hWnd);
 		return ;
 	}
 	//------------------------------------------------
@@ -396,7 +419,7 @@ void InitializeListen()
 
 	if (0 != bind(g_ListenSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)))
 	{
-		ERROR_LOG(L"bind() error");
+		ERROR_LOG(L"bind() error", g_hWnd);
 		return;
 	}
 	
@@ -415,14 +438,13 @@ void UnicastSend(char* buffer,int len, Session* toSession)
 	int sendRtn = send(toSession->socket, buffer, len, 0);
 	if (sendRtn < 0)
 	{
-		ERROR_LOG(L"send Error()");
+		ERROR_LOG(L"send Error()", g_hWnd);
 		Disconnect(toSession);
 	}
 }
 
 void ClearSession()
 {
-
 	auto iter = g_ListSession.begin();
 
 	for (; iter != g_ListSession.end(); )
@@ -437,14 +459,50 @@ void ClearSession()
 		}
 	}
 }
+void MoveStar(int* packet, Session* session)
+{
+	int x = *(packet + 2);
+	int y = *(packet + 3);
 
+	//--------------------------------------
+	// 클라에서 보내온 좌표 체크 (좌표가 범위를 넘어서거나, 속도가 초과했을때)
+	//--------------------------------------
+	if (x < 0 || y<0 || x > MAX_WIDTH || y > MAX_HEIGHT)
+	{
+		Disconnect(session);
+		return;
+	}
+	// Expectecd difX  ( -1 0 1)
+	int difX = abs(session->x - x); 
+	int difY = abs(session->y - y);
+
+	if (difX>1 || difY > 1)
+	{
+		Disconnect(session);
+		return;
+	}
+	//--------------------------------------
+	// 범위에 알맞다면, 세션의 좌표정보 갱신
+	//--------------------------------------
+	session->x = x;
+	session->y = y;
+	//--------------------------------------
+	// 갱신된 좌표정보를 다른 클라에게 브로드캐스팅
+	//--------------------------------------
+	int arr[4];
+	arr[0] = MOVE_STAR;
+	arr[1] = *(packet + 1);
+	arr[2] = *(packet + 2);
+	arr[3] = *(packet + 3);
+	BroadcastSend((char*)arr, sizeof(arr), session);
+}
 
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 {
-	HDC hdc;
-	PAINTSTRUCT ps;
-	long dwStyle;
+	//HDC hdc;
+	//PAINTSTRUCT ps;
+	//long dwStyle;
 
 	switch (iMessage)
 	{
@@ -455,7 +513,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam)
 		PAINTSTRUCT ps;
 		HDC hdc = BeginPaint(hWnd, &ps);
 		hdc = GetDC(hWnd);
-		TextOut(hdc, 100, 50, g_TextoutBuffer1, wcslen(g_TextoutBuffer1));
+		TextOut(hdc, 0, 50, g_TextoutBuffer1, wcslen(g_TextoutBuffer1));
+		TextOut(hdc, 0, 100, g_TextoutBuffer2, wcslen(g_TextoutBuffer2));
+		TextOut(hdc, 0, 150, g_TextoutBuffer3, wcslen(g_TextoutBuffer3));
 		ReleaseDC(hWnd, hdc);
 		EndPaint(hWnd, &ps);
 		break;

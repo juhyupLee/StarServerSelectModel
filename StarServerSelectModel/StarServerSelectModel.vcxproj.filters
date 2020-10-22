@@ -24,7 +24,7 @@
     <ClCompile Include="SocketLog.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
-    <ClCompile Include="MyLingBuffer.cpp">
+    <ClCompile Include="LogManager.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
   </ItemGroup>
@@ -35,7 +35,7 @@
     <ClInclude Include="SocketLog.h">
       <Filter>소스 파일</Filter>
     </ClInclude>
-    <ClInclude Include="MyLingBuffer.h">
+    <ClInclude Include="LogManager.h">
       <Filter>소스 파일</Filter>
     </ClInclude>
   </ItemGroup>

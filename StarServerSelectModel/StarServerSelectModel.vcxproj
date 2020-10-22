@@ -140,13 +140,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Console.cpp" />
+    <ClCompile Include="LogManager.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="MyLingBuffer.cpp" />
     <ClCompile Include="SocketLog.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Console.h" />
-    <ClInclude Include="MyLingBuffer.h" />
+    <ClInclude Include="LogManager.h" />
     <ClInclude Include="SocketLog.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
